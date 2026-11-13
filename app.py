@@ -15,7 +15,11 @@ import re
 EMAIL_PAT = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 PHONE_PAT = re.compile(r'\b(?:\+?\d{1,3}[- ]?)?\(?\d{2,4}\)?[- ]?\d{3,4}[- ]?\d{3,4}\b')
 CARD_PAT  = re.compile(r'\b(?:\d{4}[- ]?){3}\d{4}\b')
-INJECTION_PATS = ["ignore previous instructions", "reveal system prompt", "bypass auth", "act as dan", "drop table"]
+INJECTION_PATS = [
+    "ignore previous instructions", "reveal system prompt", "bypass auth", 
+    "act as dan", "drop table", "delete from", "update set", "insert into",
+    "modify data", "write to", "save to", "remove file", "overwrite", "execute command"
+]
 
 STATS = {"prompt_tokens": 0, "output_tokens": 0, "calls": 0}
 
@@ -75,10 +79,19 @@ async def run_analysis(prompt: str, history: list) -> tuple[str, list[str]]:
         connection_params=StdioServerParameters(command=sys.executable, args=[MCP_SCRIPT]),
         tool_filter=["fetch_repo_metadata", "search_architecture_insights"]
     )
-    agent = Agent(
+        agent = Agent(
         name="github_architect_analyst",
         model=model_name,
-        instruction="Analyze GitHub repos using MCP tools. Output structured architecture reports.",
+        instruction=(
+            "You are a Senior Software Architect Analyst. "
+            "You can analyze GitHub repositories using MCP tools, OR answer general questions about software architecture, tech stacks, and best practices. "
+            "RULES:\n"
+            "- STRICTLY READ-ONLY: Never attempt to modify, delete, write, or overwrite any repository, database, or file system.\n"
+            "- Only use MCP tools when a valid GitHub URL is provided.\n"
+            "- For general questions, provide clear, expert-level answers based on your training data.\n"
+            "- Always cite sources when referencing external discussions.\n"
+            "- Keep recommendations practical and version-aware.\n"
+        ),
         tools=[mcp_toolset],
         before_model_callback=before_model_guardrail,
         after_model_callback=after_model_guardrail
