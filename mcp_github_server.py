@@ -3,9 +3,14 @@ import os
 import re
 import requests
 import base64
-from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("GitHubArchitectMCPServer")
+# Compatibility import for MCP 2.x vs 1.x
+try:
+    from mcp.server.mcpserver import MCPServer
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as MCPServer
+
+mcp = MCPServer("GitHubArchitectMCPServer")
 
 def parse_github_url(url: str) -> tuple[str, str] | None:
     url = url.strip().rstrip("/").rstrip(".git")
