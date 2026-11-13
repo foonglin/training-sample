@@ -11,15 +11,11 @@ import db_manager
 import sys
 import re
 
-# Patterns from Lab 7 [3]
+# Patterns from Lab 7
 EMAIL_PAT = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 PHONE_PAT = re.compile(r'\b(?:\+?\d{1,3}[- ]?)?\(?\d{2,4}\)?[- ]?\d{3,4}[- ]?\d{3,4}\b')
 CARD_PAT  = re.compile(r'\b(?:\d{4}[- ]?){3}\d{4}\b')
-INJECTION_PATS = [
-    "ignore previous instructions", "reveal system prompt", "bypass auth", 
-    "act as dan", "drop table", "delete from", "update set", "insert into",
-    "modify data", "write to", "save to", "remove file", "overwrite", "execute command"
-]
+INJECTION_PATS = ["ignore previous instructions", "reveal system prompt", "bypass auth", "act as dan", "drop table"]
 
 STATS = {"prompt_tokens": 0, "output_tokens": 0, "calls": 0}
 
@@ -40,7 +36,7 @@ def before_model_guardrail(callback_context, llm_request):
     return None
 
 def after_model_guardrail(callback_context, llm_response):
-    # Cost tracking [3]
+    # Cost tracking
     u = getattr(llm_response, "usage_metadata", None)
     if u:
         STATS["prompt_tokens"] += getattr(u, "prompt_token_count", 0) or 0
@@ -52,9 +48,6 @@ def after_model_guardrail(callback_context, llm_response):
             if hasattr(p, "text") and p.text:
                 p.text += "\n\n⚠️ *AI-generated analysis. Verify with official docs.*"
     return None
-
-# default params
-retention_days = int(st.secrets.get("RETENTION_DAYS", os.environ.get("RETENTION_DAYS", 10)))
 
 # 1. Secrets & Model Config
 st.set_page_config(page_title="GitHub Repo Architect Analyzer", layout="wide")
@@ -82,16 +75,7 @@ async def run_analysis(prompt: str, history: list) -> tuple[str, list[str]]:
     agent = Agent(
         name="github_architect_analyst",
         model=model_name,
-        instruction=(
-            "You are a Senior Software Architect Analyst. "
-            "You can analyze GitHub repositories using MCP tools, OR answer general questions about software architecture, tech stacks, and best practices. "
-            "RULES:\n"
-            "- STRICTLY READ-ONLY: Never attempt to modify, delete, write, or overwrite any repository, database, or file system.\n"
-            "- Only use MCP tools when a valid GitHub URL is provided.\n"
-            "- For general questions, provide clear, expert-level answers based on your training data.\n"
-            "- Always cite sources when referencing external discussions.\n"
-            "- Keep recommendations practical and version-aware.\n"
-        ),
+        instruction="Analyze GitHub repos using MCP tools. Output structured architecture reports.",
         tools=[mcp_toolset],
         before_model_callback=before_model_guardrail,
         after_model_callback=after_model_guardrail
@@ -117,52 +101,22 @@ if "messages" not in st.session_state: st.session_state.messages = []
 with st.sidebar:
     st.title("🔍 Repo Architect Analyzer")
     repo_url = st.text_input("GitHub URL:", placeholder="https://github.com/owner/repo")
-    if st.button("🚀 Analyze & Save", use_container_width=True):
+    if st.button("🚀 Analyze & Save"):
         if repo_url:
             st.session_state.pending = f"Analyze: {repo_url}"
             st.rerun()
-            
     st.divider()
-    st.subheader("📂 Analyzed Repositories")
-    if st.button("🔍 View Available URLs & Revisions", use_container_width=True):
-        st.session_state.show_urls = True
-        st.rerun()
-
-    if st.session_state.get("show_urls"):
-        urls = db_manager.get_available_urls_with_counts(retention_days)
-        if urls:
-            for u in urls:
-                st.markdown(f"**{u['url']}** → {u['revisions']} revision(s)")
-        else:
-            st.info("No analyzed repositories found within the retention period.")
-        if st.button("❌ Close", use_container_width=True):
-            st.session_state.show_urls = False
-            st.rerun()
-
-    st.divider()
-    st.subheader("📤 Export Specific Revision")
-    export_url = st.text_input("Repo URL for Export:", key="export_url_input")
-    export_ver = st.selectbox("Revision Version:", [1, 2, 3], key="export_ver_select")
-    if st.button("📥 Export Revision to JSON", use_container_width=True):
-        if export_url:
-            data = db_manager.export_revision_to_json(export_url, export_ver)
-            if "error" in data:
-                st.error(json.loads(data)["error"])
-            else:
-                st.download_button("Download Revision JSON", data, file_name=f"revision_{export_ver}.json", mime="application/json")
-
-    st.divider()
-    if st.button("📤 Export All to JSON", use_container_width=True):
+    if st.button("📤 Export All to JSON"):
         data = db_manager.export_to_json()
         st.download_button("Download JSON", data, file_name="analyses.json", mime="application/json")
-    if st.button("🗑️ Permanently Delete Last", use_container_width=True):
+    if st.button("🗑️ Permanently Delete Last"):
         if st.session_state.messages:
             last_url = st.session_state.messages[-2]["content"].split("Analyze: ")[-1] if "Analyze: " in st.session_state.messages[-2]["content"] else ""
             if last_url and db_manager.delete_permanently(last_url):
                 st.success("Permanently deleted.")
                 st.rerun()
 
-st.title("📊 GitHub Repository Architect Analyzer Helper - Basic")
+st.title("📊 GitHub Repository Architect Analyzer")
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
