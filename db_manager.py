@@ -63,7 +63,6 @@ def cleanup_expired(ttl_days: int = DEFAULT_TTL_DAYS):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     cutoff = (datetime.utcnow() - timedelta(days=ttl_days)).isoformat()
-    # Find IDs older than retention period
     c.execute("SELECT id FROM analyses WHERE is_deleted = 0 AND created_at < ?", (cutoff,))
     ids_to_delete = [row[0] for row in c.fetchall()]
     if ids_to_delete:
@@ -88,13 +87,10 @@ def delete_permanently(repo_url: str) -> bool:
 
 def get_available_urls_with_counts(ttl_days: int = DEFAULT_TTL_DAYS) -> list[dict]:
     conn = sqlite3.connect(DB_PATH)
-    c =.cursor()
+    c = conn.cursor()  # ✅ Fixed typo here
     cutoff = (datetime.utcnow() - timedelta(days=ttl_days)).isoformat()
     c.execute("""
-        SELECT a.repo_url, COUNT(r.id) as revision_count
-        FROM analyses a
-        LEFT JOIN revisions r ON a.id = r.analysis_id
-        WHERE a.is_deleted = 0 AND a.created_at >= ?
+        SELECT a.repo_url, COUNT(r_deleted = 0 AND a.created_at >= ?
         GROUP BY a.repo_url
     """, (cutoff,))
     results = [{"url": row[0], "revisions": row[1]} for row in c.fetchall()]
