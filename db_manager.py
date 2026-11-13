@@ -28,10 +28,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-def save_analysis(repo_url: str, result: str, ttl_days: int = DEFAULT_TTL_DAYS) -> int:
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    now = datetime.utcnow().isoformat()
+def save_analysis(repo_url: str, result: str, ttl_days: int = DEFAULT_TTL_DAYS
     c.execute("INSERT OR REPLACE INTO analyses (repo_url, result, created_at, expires_at, is_deleted) VALUES (?, ?, ?, ?, 0)",
               (repo_url, result, now, (datetime.utcnow() + timedelta(days=ttl_days)).isoformat()))
     aid = c.lastrowid
@@ -87,10 +84,13 @@ def delete_permanently(repo_url: str) -> bool:
 
 def get_available_urls_with_counts(ttl_days: int = DEFAULT_TTL_DAYS) -> list[dict]:
     conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()  # ✅ Fixed typo here
+    c = conn.cursor()
     cutoff = (datetime.utcnow() - timedelta(days=ttl_days)).isoformat()
     c.execute("""
-        SELECT a.repo_url, COUNT(r_deleted = 0 AND a.created_at >= ?
+        SELECT a.repo_url, COUNT(r.id) as revision_count
+        FROM analyses a
+        LEFT JOIN revisions r ON a.id = r.analysis_id
+        WHERE a.is_deleted = 0 AND a.created_at >= ?
         GROUP BY a.repo_url
     """, (cutoff,))
     results = [{"url": row[0], "revisions": row[1]} for row in c.fetchall()]
