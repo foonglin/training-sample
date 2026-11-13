@@ -2,12 +2,52 @@ import os
 import asyncio
 import streamlit as st
 from google.genai import types
+from google.adk.models import LlmResponse
 from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioServerParameters
 import db_manager
 import sys
+import re
+
+# Patterns from Lab 7 [3]
+EMAIL_PAT = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
+PHONE_PAT = re.compile(r'\b(?:\+?\d{1,3}[- ]?)?\(?\d{2,4}\)?[- ]?\d{3,4}[- ]?\d{3,4}\b')
+CARD_PAT  = re.compile(r'\b(?:\d{4}[- ]?){3}\d{4}\b')
+INJECTION_PATS = ["ignore previous instructions", "reveal system prompt", "bypass auth", "act as dan", "drop table"]
+
+STATS = {"prompt_tokens": 0, "output_tokens": 0, "calls": 0}
+
+def before_model_guardrail(callback_context, llm_request):
+    # 1. PII Redaction
+    for content in (llm_request.contents or []):
+        for part in (content.parts or []):
+            if getattr(part, "text", None):
+                t = EMAIL_PAT.sub("[REDACTED_EMAIL]", part.text)
+                t = PHONE_PAT.sub("[REDACTED_PHONE]", t)
+                part.text = CARD_PAT.sub("[REDACTED_CARD]", t)
+    # 2. Injection Block
+    last = ""
+    if llm_request.contents and llm_request.contents[-1].parts:
+        last = (llm_request.contents[-1].parts[0].text or "").lower()
+    if any(k in last for k in INJECTION_PATS):
+        return LlmResponse(content=types.Content(role="model", parts=[types.Part(text="🛡️ [GUARDRAIL]: Request blocked by safety policy.")]))
+    return None
+
+def after_model_guardrail(callback_context, llm_response):
+    # Cost tracking [3]
+    u = getattr(llm_response, "usage_metadata", None)
+    if u:
+        STATS["prompt_tokens"] += getattr(u, "prompt_token_count", 0) or 0
+        STATS["output_tokens"] += getattr(u, "candidates_token_count", 0) or 0
+        STATS["calls"] += 1
+    # AI Disclaimer
+    if llm_response.content and llm_response.content.parts:
+        for p in llm_response.content.parts:
+            if hasattr(p, "text") and p.text:
+                p.text += "\n\n⚠️ *AI-generated analysis. Verify with official docs.*"
+    return None
 
 # 1. Secrets & Model Config
 st.set_page_config(page_title="GitHub Repo Architect Analyzer", layout="wide")
