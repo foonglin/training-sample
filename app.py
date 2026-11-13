@@ -79,7 +79,7 @@ async def run_analysis(prompt: str, history: list) -> tuple[str, list[str]]:
         connection_params=StdioServerParameters(command=sys.executable, args=[MCP_SCRIPT]),
         tool_filter=["fetch_repo_metadata", "search_architecture_insights"]
     )
-        agent = Agent(
+    agent = Agent(
         name="github_architect_analyst",
         model=model_name,
         instruction=(
