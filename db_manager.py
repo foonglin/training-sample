@@ -28,7 +28,10 @@ def init_db():
     conn.commit()
     conn.close()
 
-def save_analysis(repo_url: str, result: str, ttl_days: int = DEFAULT_TTL_DAYS
+def save_analysis(repo_url: str, result: str, ttl_days: int = DEFAULT_TTL_DAYS) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    now = datetime.utcnow().isoformat()
     c.execute("INSERT OR REPLACE INTO analyses (repo_url, result, created_at, expires_at, is_deleted) VALUES (?, ?, ?, ?, 0)",
               (repo_url, result, now, (datetime.utcnow() + timedelta(days=ttl_days)).isoformat()))
     aid = c.lastrowid
