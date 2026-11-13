@@ -7,6 +7,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools.mcp_tool.mcp_toolset import McpToolset, StdioServerParameters
 import db_manager
+import sys
 
 # 1. Secrets & Model Config
 st.set_page_config(page_title="GitHub Repo Architect Analyzer", layout="wide")
