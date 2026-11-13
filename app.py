@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import streamlit as st
 from google.genai import types
 from google.adk.models import LlmResponse
@@ -11,7 +12,7 @@ import db_manager
 import sys
 import re
 
-# Patterns from Lab 7 [3]
+# Patterns from Lab 7
 EMAIL_PAT = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 PHONE_PAT = re.compile(r'\b(?:\+?\d{1,3}[- ]?)?\(?\d{2,4}\)?[- ]?\d{3,4}[- ]?\d{3,4}\b')
 CARD_PAT  = re.compile(r'\b(?:\d{4}[- ]?){3}\d{4}\b')
@@ -21,31 +22,32 @@ INJECTION_PATS = [
     "modify data", "write to", "save to", "remove file", "overwrite", "execute command"
 ]
 
+# Session-wide & Per-turn token trackers
 STATS = {"prompt_tokens": 0, "output_tokens": 0, "calls": 0}
+TURN_STATS = {"prompt_tokens": 0, "output_tokens": 0}
 
 def before_model_guardrail(callback_context, llm_request):
     # 1. PII Redaction
     for content in (llm_request.contents or []):
         for part in (content.parts or []):
-            if getattr(part, "text", None):
-                t = EMAIL_PAT.sub("[REDACTED_EMAIL]", part.text)
-                t = PHONE_PAT.sub("[REDACTED_PHONE]", t)
-                part.text = CARD_PAT.sub("[REDACTED_CARD]", t)
-    # 2. Injection Block
-    last = ""
-    if llm_request.contents and llm_request.contents[-1].parts:
-        last = (llm_request.contents[-1].parts[0].text or "").lower()
-    if any(k in last for k in INJECTION_PATS):
+            if last for k in INJECTION_PATS):
         return LlmResponse(content=types.Content(role="model", parts=[types.Part(text="🛡️ [GUARDRAIL]: Request blocked by safety policy.")]))
     return None
 
 def after_model_guardrail(callback_context, llm_response):
-    # Cost tracking [3]
+    # Token & Cost tracking
     u = getattr(llm_response, "usage_metadata", None)
     if u:
-        STATS["prompt_tokens"] += getattr(u, "prompt_token_count", 0) or 0
-        STATS["output_tokens"] += getattr(u, "candidates_token_count", 0) or 0
+        p = getattr(u, "prompt_token_count", 0) or 0
+        o = getattr(u, "candidates_token_count", 0) or 0
+        
+        # Update session & turn trackers
+        STATS["prompt_tokens"] += p
+        STATS["output_tokens"] += o
         STATS["calls"] += 1
+        TURN_STATS["prompt_tokens"] += p
+        TURN_STATS["output_tokens"] += o
+        
     # AI Disclaimer
     if llm_response.content and llm_response.content.parts:
         for p in llm_response.content.parts:
@@ -53,7 +55,7 @@ def after_model_guardrail(callback_context, llm_response):
                 p.text += "\n\n⚠️ *AI-generated analysis. Verify with official docs.*"
     return None
 
-# default params
+# Default params
 retention_days = int(st.secrets.get("RETENTION_DAYS", os.environ.get("RETENTION_DAYS", 10)))
 
 # 1. Secrets & Model Config
@@ -68,13 +70,17 @@ if not api_key:
     st.stop()
 
 db_manager.init_db()
-db_manager.cleanup_expired()  # Auto-remove expired records
+db_manager.cleanup_expired(retention_days)  # Auto-remove expired records
 
 # 2. MCP Connection
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MCP_SCRIPT = os.path.join(BASE_DIR, "mcp_github_server.py")
 
-async def run_analysis(prompt: str, history: list) -> tuple[str, list[str]]:
+async def run_analysis(prompt: str, history: list) -> tuple[str, list[str], dict]:
+    # Reset turn tracker for this new prompt
+    TURN_STATS["prompt_tokens"] = 0
+    TURN_STATS["output_tokens"] = 0
+    
     mcp_toolset = McpToolset(
         connection_params=StdioServerParameters(command=sys.executable, args=[MCP_SCRIPT]),
         tool_filter=["fetch_repo_metadata", "search_architecture_insights"]
@@ -109,7 +115,9 @@ async def run_analysis(prompt: str, history: list) -> tuple[str, list[str]]:
                 if getattr(p, "function_call", None): tools_called.append(p.function_call.name)
                 elif getattr(p, "text", None): reply_parts.append(p.text)
     await mcp_toolset.close()
-    return "".join(reply_parts), tools_called
+    
+    # Return reply, tools, and a copy of turn stats
+    return "".join(reply_parts), tools_called, TURN_STATS.copy()
 
 # 3. Streamlit UI
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -162,7 +170,15 @@ with st.sidebar:
                 st.success("Permanently deleted.")
                 st.rerun()
 
-st.title("📊 GitHub Repository Architect Analyzer Helper - Basic")
+    st.divider()
+    st.subheader("📈 Session Telemetry")
+    st.metric("Total Prompt Tokens", f"{STATS['prompt_tokens']:,}")
+    st.metric("Total Output Tokens", f"{STATS['output_tokens']:,}")
+    # Rough cost estimate (Gemini Flash pricing)
+    est_cost = (STATS["prompt_tokens"] * 0.075 + STATS["output_tokens"] * 0.30) / 1_000_000
+    st.metric("Est. Session Cost", f"${est_cost:.5f} USD")
+
+st.title("📊 GitHub Repository Architect Analyzer")
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
@@ -173,8 +189,13 @@ if prompt:
     with st.chat_message("user"): st.markdown(prompt)
     with st.chat_message("assistant"):
         with st.spinner("Analyzing via True MCP..."):
-            reply, tools = asyncio.run(run_analysis(prompt, st.session_state.messages[:-1]))
+            reply, tools, turn_usage = asyncio.run(run_analysis(prompt, st.session_state.messages[:-1]))
             st.markdown(reply)
+            
+            # 📊 Per-turn token display
+            total_turn = turn_usage["prompt_tokens"] + turn_usage["output_tokens"]
+            st.caption(f"📊 Turn Usage: {turn_usage['prompt_tokens']:,} prompt + {turn_usage['output_tokens']:,} output = {total_turn:,} total tokens")
+            
             # Save/Revise logic
             url = prompt.split("Analyze: ")[-1].strip() if "Analyze: " in prompt else ""
             if url:
