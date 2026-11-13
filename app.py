@@ -72,14 +72,14 @@ async def run_analysis(prompt: str, history: list) -> tuple[str, list[str]]:
         connection_params=StdioServerParameters(command=sys.executable, args=[MCP_SCRIPT]),
         tool_filter=["fetch_repo_metadata", "search_architecture_insights"]
     )
-    agent = Agent(
-        name="github_architect_analyst",
-        model=model_name,
-        instruction="Analyze GitHub repos using MCP tools. Output structured architecture reports.",
-        tools=[mcp_toolset],
-        before_model_callback=before_model_guardrail,
-        after_model_callback=after_model_guardrail
-    )
+agent = Agent(
+    name="github_architect_analyst",
+    model=model_name,
+    instruction="Analyze GitHub repos using MCP tools. Output structured architecture reports.",
+    tools=[mcp_toolset],
+    before_model_callback=before_model_guardrail,
+    after_model_callback=after_model_guardrail
+)
     session_service = InMemorySessionService()
     session_id = "repo_session"
     await session_service.create_session(app_name="github_app", user_id="user", session_id=session_id)
